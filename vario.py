@@ -1,37 +1,42 @@
-
-import Adafruit_BMP.BMP085 as BMP085;
 import Adafruit_CharLCD as LCD
 
 import time;
 import threading;
 import requests;
+import socket;
+import json;
 
-sensor = BMP085.BMP085();
 lcd = LCD.Adafruit_CharLCDPlate()
 
-read_data = False;
-read_temperature = 0.0;
-read_pressure=0.0;
-read_altitude=0.0;
-set_slp_value = 101320;
-
 class ReadDataLoop(threading.Thread) :
+	def __init__(self):
+		super(ReadDataLoop,self).__init__()
+		self.readData=False;
+		HOST,PORT="192.168.8.101",9999
+		self.sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+		self.sock.connect((HOST,PORT))
+		
+
 	def run(self):
-		global read_temperature;
-		global read_pressure;
-		global read_altitude;
-		global read_data;
-		global set_slp_value;
-		try:
-			while True:
-				read_temperature = sensor.read_temperature();
-				read_pressure = sensor.read_sealevel_pressure(36);
-				read_altitude = sensor.read_altitude(set_slp_value);
-				read_data = True;
-				time.sleep(0.1)
-		except Exception:
-			print 'Read Data Loop exception';
-			pass;
+		while True:
+			data = {'command':'get-data'}
+			self.sock.sendall(json.dumps(data)+'\n')
+			received=self.sock.recv(2048)
+			self.lastDataSet=json.loads(received)
+			self.readData=True
+			time.sleep(0.1)
+
+	def incrementSLPValue(self,amount):
+		HOST,PORT="192.168.8.101",9999
+		sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+		sock.connect((HOST,PORT))
+		new_value = amount+float(self.lastDataSet['bmp_085']['set_seaLevelPressure'])
+		data = {'command':'set-sea-level-pressure','value':new_value}
+		sock.sendall(json.dumps(data)+'\n')
+		sock.close()
+
+
+dataReader = ReadDataLoop()
 
 
 class DisplayLoop(threading.Thread) : 
@@ -57,18 +62,21 @@ class DisplayLoop(threading.Thread) :
 
 		
 	def display_main(self):
-		global read_temperature
-		global read_pressure
-		global read_altitude
 		lcd.set_color(1.0, 0.0, 1.0)
 		lcd.home()
-		lcd.message('{0:0.1f}c {2:0.1f}m\n{1:0.0f}Pa vario'.format(read_temperature,read_pressure,read_altitude))
+		temperature=dataReader.lastDataSet['bmp_085']['lpf_temperature']
+		pressure=dataReader.lastDataSet['bmp_085']['lpf_pressure']
+		altitude=dataReader.lastDataSet['bmp_085']['lpf_altitude']
+		altitude_rate = dataReader.lastDataSet['bmp_085']['lpf_altitude_rate'];
+		lcd.message('{0:0.1f}c {2:0.1f}m \n{1:0.0f}Pa {3:0.1f}m/s'.format(temperature,pressure,altitude,altitude_rate))
 
 	def display_set_slp(self):
 		global set_slp_value
 		lcd.set_color(0.0,0.0,1.0)
 		lcd.home()
-		lcd.message('set slp: {0: 0.0f}Pa\naltitude{1:0.0f}m'.format(set_slp_value,read_altitude))
+		altitude=dataReader.lastDataSet['bmp_085']['lpf_altitude']
+		setSLPValue=dataReader.lastDataSet['bmp_085']['set_seaLevelPressure']
+		lcd.message('set slp: {0: 0.0f}Pa\n{1:0.0f}m'.format(setSLPValue,altitude))
 	
 	def on_button(self,name):
 		self.buttons.append(name);
@@ -91,78 +99,38 @@ class DisplayLoop(threading.Thread) :
 		lcd.clear();
 
 	def on_up(self):
-		global set_slp_value
 		if(self.display_page == 'set_slp'):
-			set_slp_value += 50.0
+			dataReader.incrementSLPValue(50.0)
 		
 	def on_down(self):
-		global set_slp_value
 		if(self.display_page == 'set_slp'):
-			set_slp_value -= 50.0
-	
-		
-class RecordLoop(threading.Thread) : 
-	def run(self):
-		global read_temperature;
-		global read_pressure;
-		global read_altitude;
-		try:
-			with open('errors.txt','a') as error_file:
-				error_file.write("<errors>");
-			self.loop()
-		except KeyboardInterrupt:
-			print 'Record Loop: keyboard interrupt';
-			with open('errors.txt','a') as error_file:
-				error_file.write("</errors>");
-			pass;
-	def loop(self):
-		while True:
-			timestamp = int(time.time());
-			payload = {'temperature': read_temperature,'pressure':read_pressure,'timestamp':timestamp};
-			try:
-				r=requests.put('http://www.ibis-stuff.ca/apps/weather',params=payload)
-				print r.text;
-				print('ok: '+r.url+'\n')
-			except Exception:
-				with open('errors.txt','a') as error_file:
-					error_file.write('<exception> '+r.url+'</exception>\n')
-				pass
-			time.sleep(600);
+			dataReader.incrementSLPValue(-50.0)
 
+display = DisplayLoop();
+		
 def onSelect():
-	global display
 	display.on_button('select')
 
 def onLeft():
-	global display
 	display.on_button('left')
 
 def onRight():
-	global display
 	display.on_button('right')
 
 def onDown(): 
-	global display
 	display.on_button('down')
 
 def onUp():
-	global display
 	display.on_button('up')
 
-read = ReadDataLoop();
-read.daemon=True;
-read.start();
+dataReader.daemon=True;
+dataReader.start();
 
-while(read_data == False):
+while(dataReader.readData == False):
 	time.sleep(0.1);
 
-display = DisplayLoop();
 display.daemon=True;
 display.start();
-
-record = RecordLoop();
-record.daemon=True;
-record.start();
 
 # Make list of button value, text, and backlight color.
 buttons = [ [LCD.SELECT, 'Select', (1,1,1),False,onSelect],
