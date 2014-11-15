@@ -1,5 +1,6 @@
 import Adafruit_CharLCD as LCD
 
+import datetime
 import time;
 import threading;
 import requests;
@@ -12,7 +13,7 @@ class ReadDataLoop(threading.Thread) :
 	def __init__(self):
 		super(ReadDataLoop,self).__init__()
 		self.readData=False;
-		HOST,PORT="192.168.8.101",9999
+		HOST,PORT="localhost",9999
 		self.sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 		self.sock.connect((HOST,PORT))
 		
@@ -23,11 +24,13 @@ class ReadDataLoop(threading.Thread) :
 			self.sock.sendall(json.dumps(data)+'\n')
 			received=self.sock.recv(2048)
 			self.lastDataSet=json.loads(received)
+			if('gps' in self.lastDataSet):
+				self.lastGPS = self.lastDataSet.pop('gps') ## strip out gps data if there is any and hold on to it
 			self.readData=True
 			time.sleep(0.1)
 
 	def incrementSLPValue(self,amount):
-		HOST,PORT="192.168.8.101",9999
+		HOST,PORT="localhost",9999
 		sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 		sock.connect((HOST,PORT))
 		new_value = amount+float(self.lastDataSet['bmp_085']['set_seaLevelPressure'])
@@ -38,30 +41,56 @@ class ReadDataLoop(threading.Thread) :
 
 dataReader = ReadDataLoop()
 
-
-class DisplayLoop(threading.Thread) : 
-
+class RecordDataLoop(threading.Thread) :
 	def __init__(self):
-		super(DisplayLoop,self).__init__()
-		self.display_page = 'main'
-		self.buttons = []
+		super(RecordDataLoop,self).__init__()
+		self.stopRequested=False
+		self.intervalSeconds = 1
 
 	def run(self):
-		self.display_loop()
-
-	def display_loop(self):
 		while True:
-			if(self.display_page == 'main'):
-				self.display_main()
-			elif(self.display_page == 'set_slp'):
-				self.display_set_slp()
-			else:
-				self.display_main()
-			self.process_buttons()
-			time.sleep(0.025)
+			data = dataReader.lastDataSet
+			if dataReader.lastGPS != None:
+				data['gps'] = dataReader.lastGPS
+				print dataReader.lastGPS
+				del dataReader.lastGPS
+				dataReader.lastGPS = None
 
-		
-	def display_main(self):
+			last_json = json.dumps(data)
+			 
+			with open(self.filename,'a') as output_file:
+				output_file.write(last_json+'\n')
+			time.sleep(self.intervalSeconds)
+			if(self.stopRequested):
+				break;
+	def request_stop(self):
+		self.stopRequested = True
+		self.join()
+	def request_start(self):
+		dt=datetime.datetime.now()
+		self.filename = 'recorded-{year}-{month}-{day}-{hour}-{min}-{sec}'.format(year=dt.year,month=dt.month,day=dt.day,hour=dt.hour,min=dt.minute,sec=dt.second)
+		print '['+self.filename+']'
+		self.daemon=True
+		self.start()
+
+class ScreenBase:
+	def get_name(self):
+		return 'base'
+	def on_up(self):
+		return
+	def on_down(self):
+		return
+	def on_left(self):
+		return
+	def on_right(self):
+		return
+	def display(self):
+		return
+
+class MainScreen (ScreenBase) : 
+	def get_name(self):
+		return 'main'
+	def display(self):
 		lcd.set_color(1.0, 0.0, 1.0)
 		lcd.home()
 		temperature=dataReader.lastDataSet['bmp_085']['lpf_temperature']
@@ -70,41 +99,124 @@ class DisplayLoop(threading.Thread) :
 		altitude_rate = dataReader.lastDataSet['bmp_085']['lpf_altitude_rate'];
 		lcd.message('{0:0.1f}c {2:0.1f}m \n{1:0.0f}Pa {3:0.1f}m/s'.format(temperature,pressure,altitude,altitude_rate))
 
-	def display_set_slp(self):
+class DataRecorderScreen (ScreenBase):
+	def __init__(self):
+		self.dataRecorder = None
+
+	def get_name(self):
+		return 'data_recorder'
+	def on_up(self):
+		if self.dataRecorder == None:
+			self.dataRecorder = RecordDataLoop()
+			self.dataRecorder.request_start()
+	def on_down(self):
+		self.dataRecorder.request_stop()
+		del self.dataRecorder
+		self.dataRecorder = None
+	def on_left(self):
+		return
+	def on_right(self):
+		return
+	def display(self):
+		lcd.set_color(1.0,0.0,0.0)
+		lcd.home()
+		status = 'rec' if self.dataRecorder != None else 'off '
+		interval = 'x' if self.dataRecorder == None else self.dataRecorder.intervalSeconds
+		lcd.message('{0} {1} '.format(status,interval))
+		
+class SetSLPScreen (ScreenBase): 
+	def get_name(self):
+		return 'set_slp'
+	def on_up(self):
+		dataReader.incrementSLPValue(50.0)
+	def on_down(self):
+		dataReader.incrementSLPValue(-50.0)
+	def display(self):
 		global set_slp_value
 		lcd.set_color(0.0,0.0,1.0)
 		lcd.home()
 		altitude=dataReader.lastDataSet['bmp_085']['lpf_altitude']
 		setSLPValue=dataReader.lastDataSet['bmp_085']['set_seaLevelPressure']
 		lcd.message('set slp: {0: 0.0f}Pa\n{1:0.0f}m'.format(setSLPValue,altitude))
-	
+		
+class GPSScreen (ScreenBase):
+	def get_name(self):
+		return 'gps'
+	def display(self):
+		lcd.set_color(0.0,1.0,0.0)
+		lcd.home()
+		if 'lat' in dataReader.lastGPS:
+			lat = dataReader.lastGPS['lat']
+			lon = dataReader.lastGPS['lon']
+			speed = dataReader.lastGPS['speed']
+			alt = dataReader.lastGPS['alt']
+			heading = dataReader.lastGPS['track']
+			lcd.message('{0:0.2f},{1:0.2f}\n{3:0.0f}kmh {4:0.1f}m {2:0.1f}'.format(lat,lon,heading,speed,alt))
+
+setSLPScreen = SetSLPScreen()
+dataRecorderScreen = DataRecorderScreen()
+mainScreen = MainScreen()
+gpsScreen = GPSScreen()
+
+class DisplayLoop(threading.Thread) : 
+
+	def __init__(self):
+		super(DisplayLoop,self).__init__()
+		self.display_page = mainScreen.get_name()
+		self.buttons = []
+
+	def run(self):
+		self.display_loop()
+
+	def get_screen_object(self):
+		if self.display_page == 'main':
+			return mainScreen
+		elif self.display_page == 'set_slp':
+			return setSLPScreen
+		elif self.display_page == 'data_recorder':
+			return dataRecorderScreen
+		elif self.display_page == 'gps':
+			return gpsScreen
+		else:
+			return mainScreen
+
+	def display_loop(self):
+		while True:
+			screen = self.get_screen_object()
+			screen.display()
+			self.process_buttons()
+			time.sleep(0.025)
+
 	def on_button(self,name):
 		self.buttons.append(name);
 
 	def process_buttons(self):
 		if(len(self.buttons) > 0):
+			
 			process=self.buttons.pop(0)
 			if(process == 'select'):
 				self.on_select()
-			elif(process == 'up'):
-				self.on_up()
+			screen = self.get_screen_object()
+
+			if(process == 'up'):
+				screen.on_up()
 			elif(process == 'down'):
-				self.on_down()
+				screen.on_down()
+			elif(process == 'left'):
+				screen.on_left()
+			elif(process == 'right'):
+				screen.on_right()
 
 	def on_select(self):
 		if(self.display_page == 'main'):
+			self.display_page = 'gps'
+		elif(self.display_page == 'gps'):
 			self.display_page = 'set_slp'
+		elif self.display_page == 'set_slp':
+			self.display_page = 'data_recorder'
 		else:
-			self.display_page = 'main';
+			self.display_page = 'main'
 		lcd.clear();
-
-	def on_up(self):
-		if(self.display_page == 'set_slp'):
-			dataReader.incrementSLPValue(50.0)
-		
-	def on_down(self):
-		if(self.display_page == 'set_slp'):
-			dataReader.incrementSLPValue(-50.0)
 
 display = DisplayLoop();
 		
