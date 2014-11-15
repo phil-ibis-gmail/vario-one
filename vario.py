@@ -24,8 +24,11 @@ class ReadDataLoop(threading.Thread) :
 			self.sock.sendall(json.dumps(data)+'\n')
 			received=self.sock.recv(2048)
 			self.lastDataSet=json.loads(received)
-			if('gps' in self.lastDataSet):
-				self.lastGPS = self.lastDataSet.pop('gps') ## strip out gps data if there is any and hold on to it
+			if 'gps' in self.lastDataSet:
+				temp= self.lastDataSet.pop('gps') ## strip out gps data if there is any and hold on to it if it's a tpv packet (as opposed to a sky packet)
+				if 'lat' in temp:
+					self.lastGPS = temp
+
 			self.readData=True
 			time.sleep(0.1)
 
@@ -145,13 +148,14 @@ class GPSScreen (ScreenBase):
 	def display(self):
 		lcd.set_color(0.0,1.0,0.0)
 		lcd.home()
-		if 'lat' in dataReader.lastGPS:
-			lat = dataReader.lastGPS['lat']
-			lon = dataReader.lastGPS['lon']
-			speed = dataReader.lastGPS['speed']
-			alt = dataReader.lastGPS['alt']
-			heading = dataReader.lastGPS['track']
-			lcd.message('{0:0.2f},{1:0.2f}\n{3:0.0f}kmh {4:0.1f}m {2:0.1f}'.format(lat,lon,heading,speed,alt))
+
+		lat = '{0:0.4f}'.format(dataReader.lastGPS['lat'])  if 'lat' in dataReader.lastGPS else 'lat'
+		lon = '{0:0.4f}'.format(dataReader.lastGPS['lon']) if 'lon' in dataReader.lastGPS else 'lon'
+		speed = '{0:2.1f}'.format(dataReader.lastGPS['speed']) if 'speed' in dataReader.lastGPS else 'xx.x'
+		alt = '{0:4.0f}'.format(dataReader.lastGPS['alt']) if 'alt' in dataReader.lastGPS else 'xxxx'
+		heading = '{0:3.0f}'.format(dataReader.lastGPS['track']) if 'track' in dataReader.lastGPS else 'xxx'
+		
+		lcd.message('{0},{1}\n{3} {4}m {2}'.format(lat,lon,heading,speed,alt))
 
 setSLPScreen = SetSLPScreen()
 dataRecorderScreen = DataRecorderScreen()
