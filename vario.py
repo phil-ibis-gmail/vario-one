@@ -16,7 +16,8 @@ class ReadDataLoop(threading.Thread) :
 		HOST,PORT="localhost",9999
 		self.sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 		self.sock.connect((HOST,PORT))
-		
+		self.lastGPS = None
+		self.lastTPV = None		
 
 	def run(self):
 		while True:
@@ -26,9 +27,9 @@ class ReadDataLoop(threading.Thread) :
 			self.lastDataSet=json.loads(received)
 			if 'gps' in self.lastDataSet:
 				temp= self.lastDataSet.pop('gps') ## strip out gps data if there is any and hold on to it if it's a tpv packet (as opposed to a sky packet)
-				if 'lat' in temp:
-					self.lastGPS = temp
-
+				self.lastGPS = temp
+				if(temp['class'] == 'TPV'):
+					self.lastTPV = temp
 			self.readData=True
 			time.sleep(0.1)
 
@@ -56,7 +57,6 @@ class RecordDataLoop(threading.Thread) :
 			if dataReader.lastGPS != None:
 				data['gps'] = dataReader.lastGPS
 				print dataReader.lastGPS
-				del dataReader.lastGPS
 				dataReader.lastGPS = None
 
 			last_json = json.dumps(data)
@@ -71,8 +71,8 @@ class RecordDataLoop(threading.Thread) :
 		self.join()
 	def request_start(self):
 		dt=datetime.datetime.now()
-		self.filename = 'recorded-{year}-{month}-{day}-{hour}-{min}-{sec}'.format(year=dt.year,month=dt.month,day=dt.day,hour=dt.hour,min=dt.minute,sec=dt.second)
-		print '['+self.filename+']'
+		self.filename = '/home/pi/projects/vario-one/'
+		self.filename += 'recorded-{year}-{month}-{day}-{hour}-{min}-{sec}'.format(year=dt.year,month=dt.month,day=dt.day,hour=dt.hour,min=dt.minute,sec=dt.second)
 		self.daemon=True
 		self.start()
 
@@ -148,14 +148,17 @@ class GPSScreen (ScreenBase):
 	def display(self):
 		lcd.set_color(0.0,1.0,0.0)
 		lcd.home()
-
-		lat = '{0:0.4f}'.format(dataReader.lastGPS['lat'])  if 'lat' in dataReader.lastGPS else 'lat'
-		lon = '{0:0.4f}'.format(dataReader.lastGPS['lon']) if 'lon' in dataReader.lastGPS else 'lon'
-		speed = '{0:2.1f}'.format(dataReader.lastGPS['speed']) if 'speed' in dataReader.lastGPS else 'xx.x'
-		alt = '{0:4.0f}'.format(dataReader.lastGPS['alt']) if 'alt' in dataReader.lastGPS else 'xxxx'
-		heading = '{0:3.0f}'.format(dataReader.lastGPS['track']) if 'track' in dataReader.lastGPS else 'xxx'
 		
-		lcd.message('{0},{1}\n{3} {4}m {2}'.format(lat,lon,heading,speed,alt))
+		data = dataReader.lastTPV
+		if(data != None):
+			kmh = data['speed']*3.6
+			lat = '{0:0.4f}'.format(data['lat'])  if 'lat' in data else 'lat'
+			lon = '{0:0.4f}'.format(data['lon']) if 'lon' in data else 'lon'
+			speed = '{0:2.1f}'.format(kmh) if 'speed' in data else 'xx.x'
+			alt = '{0:4.0f}'.format(data['alt']) if 'alt' in data else 'xxxx'
+			heading = '{0:3.0f}'.format(data['track']) if 'track' in data else 'xxx'
+		
+			lcd.message('{0},{1}\n{3} {4}m {2}'.format(lat,lon,heading,speed,alt))
 
 setSLPScreen = SetSLPScreen()
 dataRecorderScreen = DataRecorderScreen()
