@@ -6,6 +6,7 @@ import threading;
 import requests;
 import socket;
 import json;
+from subprocess import call
 
 lcd = LCD.Adafruit_CharLCDPlate()
 
@@ -160,10 +161,30 @@ class GPSScreen (ScreenBase):
 		
 			lcd.message('{0},{1}\n{3} {4}m {2}'.format(lat,lon,heading,speed,alt))
 
+class DateScreen (ScreenBase): 
+	def get_name(self):
+		return 'date';
+	def display(self):
+		lcd.set_color(0.0,1.0,1.0)
+		lcd.home()
+		
+		data = dataReader.lastTPV
+		if(data != None):
+			gps_utc = data['time']
+			my_utc = datetime.datetime.utcnow();
+			lcd.message('{0}\n{1}'.format(gps_utc,my_utc))
+
+	def on_up(self):
+		data = dataReader.lastTPV
+		if(data != None):
+			gps_utc = data['time']
+			call(["/bin/date","-s",gps_utc])
+
 setSLPScreen = SetSLPScreen()
 dataRecorderScreen = DataRecorderScreen()
 mainScreen = MainScreen()
 gpsScreen = GPSScreen()
+dateScreen = DateScreen()
 
 class DisplayLoop(threading.Thread) : 
 
@@ -184,6 +205,8 @@ class DisplayLoop(threading.Thread) :
 			return dataRecorderScreen
 		elif self.display_page == 'gps':
 			return gpsScreen
+		elif self.display_page == 'date':
+			return dateScreen
 		else:
 			return mainScreen
 
@@ -221,6 +244,8 @@ class DisplayLoop(threading.Thread) :
 			self.display_page = 'set_slp'
 		elif self.display_page == 'set_slp':
 			self.display_page = 'data_recorder'
+		elif self.display_page == 'data_recorder':
+			self.display_page = 'date'
 		else:
 			self.display_page = 'main'
 		lcd.clear();
