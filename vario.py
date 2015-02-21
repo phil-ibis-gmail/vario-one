@@ -152,7 +152,7 @@ class GPSScreen (ScreenBase):
 		
 		data = dataReader.lastTPV
 		if(data != None):
-			kmh = data['speed']*3.6
+			kmh = data['speed']*3.6 if 'speed' in data else 0
 			lat = '{0:0.4f}'.format(data['lat'])  if 'lat' in data else 'lat'
 			lon = '{0:0.4f}'.format(data['lon']) if 'lon' in data else 'lon'
 			speed = '{0:2.1f}'.format(kmh) if 'speed' in data else 'xx.x'
@@ -160,6 +160,8 @@ class GPSScreen (ScreenBase):
 			heading = '{0:3.0f}'.format(data['track']) if 'track' in data else 'xxx'
 		
 			lcd.message('{0},{1}\n{3} {4}m {2}'.format(lat,lon,heading,speed,alt))
+		else
+			lcd.message('no data yet')
 
 class DateScreen (ScreenBase): 
 	def get_name(self):
@@ -169,14 +171,16 @@ class DateScreen (ScreenBase):
 		lcd.home()
 		
 		data = dataReader.lastTPV
-		if(data != None):
+		if(data != None and 'time' in data):
 			gps_utc = data['time']
 			my_utc = datetime.datetime.utcnow();
 			lcd.message('{0}\n{1}'.format(gps_utc,my_utc))
+		else
+			lcd.message('no data yet')
 
 	def on_up(self):
 		data = dataReader.lastTPV
-		if(data != None):
+		if(data != None and 'time' in data):
 			gps_utc = data['time']
 			call(["/bin/date","-s",gps_utc])
 
